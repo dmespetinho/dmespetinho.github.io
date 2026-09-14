@@ -150,7 +150,7 @@ function seed(){
     {id:'acai',nome:'Açaí',ordem:3,oculta:false},{id:'bebida',nome:'Bebidas',ordem:4,oculta:false}
   ];
   S = {
-    loja:{ nome:'DM Espetinho', aberto:true, horario:'Seg a Dom · 11h-15h e 18h-23h',
+    loja:{ nome:'DM Espetinho', pausado:false, janelas:[['11:00','15:00'],['18:00','23:00']], horario:'Seg a Dom · 11h-15h e 18h-23h',
       endereco:'Av. Getúlio Vargas, em frente à Pague Menos', whats:'(64) 99279-1748',
       instagram:'@Dm_Espetinho_Distribuidora',
       pixKey:'64992791748', pixNome:'DM Espetinho', banner:'',
@@ -239,6 +239,29 @@ function clienteStats(tel){
 }
 function isAdmin(){ return UI.adm.user && UI.adm.user.papel==='admin'; }
 function telValido(t){ return String(t||'').replace(/\D/g,'').length>=10; }
+
+/* ---- horário de funcionamento (aberto/fechado automático, fuso de Breu Branco/PA) ---- */
+var DEFAULT_JANELAS=[['11:00','15:00'],['18:00','23:00']];
+function hm(s){ var p=String(s||'0:0').split(':'); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0); }
+function janelasLoja(){ var j=S.loja&&S.loja.janelas; return (j&&j.length)?j:DEFAULT_JANELAS; }
+function agoraMinLoja(){
+  try{
+    var s=new Intl.DateTimeFormat('en-GB',{timeZone:'America/Belem',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date());
+    var p=s.split(':'); return (parseInt(p[0],10)||0)*60+(parseInt(p[1],10)||0);
+  }catch(e){ var d=new Date(); return d.getHours()*60+d.getMinutes(); }
+}
+function lojaAberta(){
+  var l=S.loja||{};
+  if(l.pausado) return false;
+  var m=agoraMinLoja(), js=janelasLoja();
+  for(var i=0;i<js.length;i++){ var a=hm(js[i][0]), b=hm(js[i][1]);
+    if(a<=b){ if(m>=a&&m<b) return true; } else { if(m>=a||m<b) return true; } }
+  return false;
+}
+function fmtHora(s){ var p=String(s).split(':'); var mm=p[1]||'00'; return mm==='00'?(parseInt(p[0],10)+'h'):(parseInt(p[0],10)+'h'+mm); }
+function fmtJanelas(js){ js=js||janelasLoja(); return 'Seg a Dom · '+js.map(function(w){return fmtHora(w[0])+'-'+fmtHora(w[1]);}).join(' e '); }
+var _lastOpen=null;
+function clockWatch(){ try{ var o=lojaAberta(); if(_lastOpen===null){ _lastOpen=o; } else if(o!==_lastOpen){ _lastOpen=o; render(); } }catch(e){} }
 function descontoValor(sub){ return UI.cupom&&UI.cupom.pct ? Math.round(sub*UI.cupom.pct*100)/100 : 0; }
 function waLink(tel,msg){ return 'https://wa.me/55'+String(tel).replace(/\D/g,'')+(msg?'?text='+encodeURIComponent(msg):''); }
 
@@ -307,7 +330,7 @@ function cliTop(cur){
     return '<button class="dn-item'+(navCur===t[0]?' on':'')+'" data-action="cli-go" data-s="'+t[0]+'">'+ic(t[1])+'<span>'+t[2]+'</span>'+b+'</button>'; }).join('');
   return '<div class="topbar"><img class="logo" src="assets/logo-dm.jpg" alt="DM Espetinho">'+
     '<div class="tb-id"><div class="tb-tt">'+esc(l.nome)+'</div>'+
-    '<div class="tb-sub"><span class="dot '+(l.aberto?'on':'off')+'"></span>'+(l.aberto?'Aberto agora':'Fechado agora')+'</div></div>'+
+    '<div class="tb-sub"><span class="dot '+(lojaAberta()?'on':'off')+'"></span>'+(lojaAberta()?'Aberto agora':'Fechado agora')+'</div></div>'+
     '<nav class="desktop-nav">'+nav+'</nav>'+
     '<div class="tb-right"><button class="iconbtn" data-action="cli-go" data-s="perfil" aria-label="Meu perfil">'+(UI.me.foto?'<img class="ava-mini" src="'+UI.me.foto+'" alt="">':ic('user'))+'</button></div></div>';
 }
@@ -322,9 +345,9 @@ function cliHome(){
   var l=S.loja;
   var h='<div class="hero"><div class="hero-tx"><div class="eyebrow">'+ic('pin')+' Breu Branco / PA</div>'+
      '<h1>'+esc(l.nome)+'</h1><p>Espetinhos na brasa, lanches e porções. Peça e receba em casa.</p>'+
-     '<div class="storebar"><span class="dot '+(l.aberto?'on':'off')+'"></span>'+(l.aberto?'Aberto · '+esc(l.horario):'Fechado agora · '+esc(l.horario))+'</div></div>'+
+     '<div class="storebar"><span class="dot '+(lojaAberta()?'on':'off')+'"></span>'+(lojaAberta()?'Aberto · '+esc(l.horario):'Fechado agora · '+esc(l.horario))+'</div></div>'+
      '<img class="hero-logo" src="assets/logo-dm.jpg" alt=""></div>';
-  if(!l.aberto) h+='<div class="notice warn">'+ic('clock')+'<div>A loja está <strong>fechada agora</strong>. Você pode ver o cardápio; o pedido abre no horário: '+esc(l.horario)+'.</div></div><div class="sp"></div>';
+  if(!lojaAberta()) h+='<div class="notice warn">'+ic('clock')+'<div>A loja está <strong>fechada agora</strong>. Você pode ver o cardápio e montar o pedido; a finalização abre no horário: '+esc(l.horario)+'.</div></div><div class="sp"></div>';
   if(l.banner) h+='<div class="banner">'+ic('gift')+' '+esc(l.banner)+'</div>';
   var promos=(S.promos||[]).filter(function(p){return p.ativo;});
   if(promos.length){ h+='<div class="catlabel">Promoções</div><div class="promos">'+promos.map(function(p){
@@ -445,9 +468,7 @@ function cliCarrinho(){
      '<div class="totrow grand"><span>Total</span><strong>'+money(sub-desc)+'</strong></div></div>';
   if(S.loja.minPedido>0 && sub<S.loja.minPedido)
     h+='<div class="notice warn">'+ic('warn')+'<div>Pedido mínimo de '+money(S.loja.minPedido)+'. Faltam '+money(S.loja.minPedido-sub)+'.</div></div>';
-  h+='<div class="sticky-cta">'+ (S.loja.aberto
-      ? '<button class="btn btn-primary btn-block btn-lg" data-action="cart-continuar">Continuar pedido</button>'
-      : '<button class="btn btn-primary btn-block btn-lg" disabled>Loja fechada · abre '+esc(S.loja.horario)+'</button>') +'</div>';
+  h+='<div class="sticky-cta"><button class="btn btn-primary btn-block btn-lg" data-action="cart-continuar">Continuar pedido</button></div>';
   return h;
 }
 
@@ -988,12 +1009,20 @@ function admEntregas(){
     '<div class="notice info">'+ic('info')+'<div>A taxa de entrega é a mesma para qualquer bairro (definição do DM Espetinho). O cliente digita o bairro manualmente no endereço.</div></div>';
 }
 function admHorarios(){
-  var l=S.loja;
+  var l=S.loja, js=janelasLoja(), ab=lojaAberta();
+  var linhas=js.map(function(w,i){
+    return '<div class="field" style="display:flex;gap:8px;align-items:flex-end">'+
+      '<div style="flex:1"><label>Abre</label><input type="time" id="jr-a'+i+'" value="'+esc(w[0])+'"></div>'+
+      '<div style="flex:1"><label>Fecha</label><input type="time" id="jr-b'+i+'" value="'+esc(w[1])+'"></div>'+
+      '<button class="btn btn-ghost" data-action="adm-jan-rm" data-i="'+i+'">Remover</button></div>';
+  }).join('');
   return '<div class="pagehead"><h2>Horários</h2></div>'+
-    '<div class="card"><div class="field"><label>Texto de funcionamento</label><input id="hr-txt" value="'+esc(l.horario)+'"></div>'+
-    '<div class="bigopt'+(l.aberto?' sel':'')+'" data-action="adm-toggle-aberto"><div class="bo-ic">'+ic(l.aberto?'checkc':'x')+'</div><div><div class="bo-t">'+(l.aberto?'Loja ABERTA':'Loja FECHADA')+'</div><div class="bo-s">Toque para '+(l.aberto?'fechar (pausa)':'abrir')+' agora</div></div></div>'+
-    '<button class="btn btn-primary btn-block" data-action="adm-save-horarios">Salvar</button></div>'+
-    '<div class="notice info">'+ic('info')+'<div>Com a loja fechada, o cliente vê o cardápio mas não finaliza pedido.</div></div>';
+    '<div class="notice '+(ab?'info':'warn')+'">'+ic(ab?'checkc':'clock')+'<div>Agora a loja está <strong>'+(ab?'ABERTA':'FECHADA')+'</strong> (horário de Breu Branco/PA). Ela abre e fecha sozinha conforme as janelas abaixo.</div></div>'+
+    '<div class="card"><div class="field"><label>Janelas de funcionamento (todos os dias)</label></div><div id="janelas">'+linhas+'</div>'+
+    '<button class="btn btn-ghost btn-block" data-action="adm-jan-add">'+ic('plus')+' Adicionar horário</button>'+
+    '<div class="sp"></div><button class="btn btn-primary btn-block" data-action="adm-save-horarios">Salvar horários</button></div>'+
+    '<div class="bigopt'+(l.pausado?' sel':'')+'" data-action="adm-toggle-pausa"><div class="bo-ic">'+ic(l.pausado?'x':'checkc')+'</div><div><div class="bo-t">'+(l.pausado?'PAUSADA manualmente (fechada)':'Seguindo o horário automático')+'</div><div class="bo-s">'+(l.pausado?'Toque para voltar a abrir no horário':'Toque para fechar agora, mesmo dentro do horário')+'</div></div></div>'+
+    '<div class="notice info">'+ic('info')+'<div>Fora do horário, o cliente monta o pedido normalmente, mas ao avançar vê "Infelizmente estamos fechado no momento". A pausa serve pra fechar antes por algum imprevisto.</div></div>';
 }
 function admPagamentos(){
   var l=S.loja;
@@ -1124,7 +1153,6 @@ function revalidarCarrinho(){
 }
 on('cart-continuar',function(){
   if(!UI.cart.length){ toast('Sua sacola está vazia','err'); return; }
-  if(!S.loja.aberto){ toast('A loja está fechada agora','err'); return; }
   var av=revalidarCarrinho();
   if(av.length){ render(); toast(av[0],'info'); if(!UI.cart.length) return; }
   if(S.loja.minPedido>0 && cartSubtotal()<S.loja.minPedido){ toast('Pedido mínimo de '+money(S.loja.minPedido),'err'); render(); return; }
@@ -1139,6 +1167,7 @@ on('chk-endok',function(){
   if(!(c.rua||'').trim()){ toast('Informe a rua ou avenida','err'); return; }
   if(!(c.numero||'').trim()){ toast('Informe o número','err'); return; }
   if(!(c.ref||'').trim()){ toast('Informe um ponto de referência','err'); return; }
+  if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
   UI.cli.screen='dados'; render();
 });
 on('chk-dadosok',function(){
@@ -1147,6 +1176,7 @@ on('chk-dadosok',function(){
   if(!nome){ toast('Informe seu nome','err'); return; }
   if(!telValido(whats)){ toast('Cadastre um WhatsApp válido com DDD — o restaurante precisa dele pra avisar sobre o pedido','err'); return; }
   c.nome=nome; c.whats=whats;   // fixa os valores (inclusive quando vieram do perfil já cadastrado)
+  if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
   UI.cli.screen='pagamento'; render();
 });
 on('chk-pay',function(d){ UI.chk.pay=d.p; render(); });
@@ -1154,7 +1184,7 @@ on('chk-copiapix',function(){ try{ navigator.clipboard.writeText(S.loja.pixKey);
 on('chk-upload',function(){ pickImage(function(u){ UI.chk.comprov=u; render(); toast('Comprovante anexado','ok'); }); });
 on('chk-finalizar',function(){
   var c=UI.chk;
-  if(!S.loja.aberto){ toast('A loja fechou. Não é possível finalizar agora.','err'); return; }
+  if(!lojaAberta()){ toast('Infelizmente estamos fechado no momento','err'); return; }
   if(!c.pay){ toast('Escolha a forma de pagamento','err'); return; }
   if(c.pay==='pix' && !c.comprov){ toast('Anexe o comprovante do Pix','err'); return; }
   var av=revalidarCarrinho();
@@ -1344,8 +1374,11 @@ on('cat-oculta',function(d){ var c=cat(d.id); c.oculta=!c.oculta; save(); render
 /* entregas/horários/pagamentos */
 on('adm-save-entregas',function(){ if(!needAdmin())return; S.loja.taxaEntrega=parseFloat(String($('ent-taxa').value).replace(',','.'))||0; S.loja.prazoEntrega=$('ent-prazo').value; save(); toast('Entregas salvas','ok'); });
 on('adm-toggle-retirada',function(){ S.loja.retirada=!S.loja.retirada; render(); });
-on('adm-toggle-aberto',function(){ S.loja.aberto=!S.loja.aberto; render(); });
-on('adm-save-horarios',function(){ S.loja.horario=$('hr-txt').value; save(); toast('Horários salvos','ok'); });
+on('adm-toggle-pausa',function(){ if(!needAdmin())return; S.loja.pausado=!S.loja.pausado; save(); toast(S.loja.pausado?'Loja pausada (fechada agora)':'Loja voltou ao horário automático', S.loja.pausado?'info':'ok'); render(); });
+function _janelasAtuais(){ var js=(S.loja.janelas&&S.loja.janelas.length)?S.loja.janelas:DEFAULT_JANELAS; return js.map(function(w){return [w[0],w[1]];}); }
+on('adm-jan-add',function(){ if(!needAdmin())return; var js=_janelasAtuais(); js.push(['18:00','23:00']); S.loja.janelas=js; render(); });
+on('adm-jan-rm',function(d){ if(!needAdmin())return; var js=_janelasAtuais(); js.splice(+d.i,1); S.loja.janelas=js; render(); });
+on('adm-save-horarios',function(){ if(!needAdmin())return; var js=[]; for(var i=0;;i++){ var a=$('jr-a'+i), b=$('jr-b'+i); if(!a||!b) break; if(a.value&&b.value) js.push([a.value,b.value]); } if(!js.length){ toast('Adicione pelo menos uma janela de horário','err'); return; } S.loja.janelas=js; S.loja.horario=fmtJanelas(js); save(); toast('Horários salvos','ok'); render(); });
 on('adm-toggle-pag',function(d){ S.loja[d.k]=!S.loja[d.k]; render(); });
 on('adm-save-pag',function(){ if(!needAdmin())return; S.loja.pixKey=$('pg-key').value; S.loja.pixNome=$('pg-nome').value; save(); toast('Pagamentos salvos','ok'); });
 on('adm-test-print',function(){ var demo={id:'#TESTE',dia:hoje(),criadoEm:nowHM(),tipo:'delivery',nome:'Cliente Teste',tel:'(00) 00000-0000',end:'Rua de Teste, 1',bairro:'Centro',entregaSobConsulta:false,itens:[{qty:2,nome:'Espetinho de Carne',preco:8,adic:[],obs:'',opc:{}}],total:16,subtotal:16,pay:{label:'Pix',troco:''},obs:''}; abrirCupom(demo,false); });
@@ -1450,3 +1483,4 @@ if(CLOUD){
   setInterval(syncCheck, 1000);
   boot();
 }
+if(typeof window!=='undefined') setInterval(clockWatch, 30000);   // vira Aberto/Fechado sozinho ao cruzar o horário
