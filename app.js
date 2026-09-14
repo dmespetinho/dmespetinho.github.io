@@ -198,8 +198,27 @@ function seedOrder(o){
 
 /* persistência */
 function persistLocal(){ if(APP_MODE==='admin') return; try{ localStorage.setItem(MEKEY, JSON.stringify(UI.me)); localStorage.setItem(CARTKEY, JSON.stringify(UI.cart)); }catch(e){} }
-function saveCliente(){ persistLocal(); }   // salva perfil + carrinho do cliente, sem mexer/avisar o painel
+function saveCliente(){ persistLocal(); if(CLOUD) cloudCliUpsert(); }   // salva perfil + carrinho do cliente (local + conta na nuvem)
 function save(){ try{ localStorage.setItem(LSKEY, JSON.stringify(S)); persistLocal(); if(CLOUD) cloudPush(); else marcarRev(); }catch(e){} }
+
+/* ---- conta do cliente (login por WhatsApp, tabela 'clientes' no Supabase) ---- */
+function normWhats(t){ return String(t||'').replace(/\D/g,''); }
+function normNome(s){ return String(s||'').toLowerCase().trim().replace(/\s+/g,' ').normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+function estaLogado(){ return !!(typeof UI!=='undefined' && UI.me && telValido(UI.me.tel) && (UI.me.nome||'').trim()); }
+function cloudCliGet(whats){ if(!sb) return Promise.resolve(null); return sb.from('clientes').select('*').eq('whats',whats).maybeSingle().then(function(r){ return (r&&r.data)?r.data:null; }).catch(function(){ return null; }); }
+function cloudCliUpsert(){ if(!sb) return; var w=normWhats(UI.me&&UI.me.tel); if(!w) return; sb.from('clientes').upsert({whats:w,nome:UI.me.nome||'',foto:UI.me.foto||null,enderecos:UI.me.enderecos||[],updated_at:new Date().toISOString()},{onConflict:'whats'}).then(function(r){ if(r&&r.error) console.warn('DM cli upsert:',r.error.message); }); }
+function refreshCliente(){
+  if(!CLOUD||!estaLogado()) return;
+  cloudCliGet(normWhats(UI.me.tel)).then(function(cli){
+    if(!cli){ cloudCliUpsert(); return; }   // conta ainda nao existe na tabela -> cria a partir do local
+    var ae=(typeof document!=='undefined')&&document.activeElement;
+    if(ae&&ae.tagName&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName)) return; // nao atrapalha quem digita
+    if(Array.isArray(cli.enderecos)) UI.me.enderecos=cli.enderecos;
+    if(cli.foto) UI.me.foto=cli.foto;
+    if(cli.nome && !(UI.me.nome||'').trim()) UI.me.nome=cli.nome;
+    persistLocal(); render();
+  });
+}
 function marcarRev(){ try{ lastRev=String(Date.now())+'-'+Math.floor(Math.random()*1e6); localStorage.setItem(REVKEY,lastRev); if(bc){ try{ bc.postMessage(lastRev); }catch(e){} } }catch(e){} }
 function reloadShared(){ try{ var raw=localStorage.getItem(LSKEY); if(raw){ var s=JSON.parse(raw); if(s&&s.produtos){ S=s; if(!S.promos)S.promos=[]; return true; } } }catch(e){} return false; }
 function syncCheck(){
@@ -305,7 +324,22 @@ function confirmar(titulo,texto,acaoLabel,cb,perigo){
 /* ============================================================================
    APP DO CLIENTE
    ============================================================================ */
+function cliLogin(){
+  var L=UI.login||{};
+  return '<div class="stage cli login-stage"><div class="scroll"><div class="login-wrap">'+
+    '<img class="login-logo" src="assets/logo-dm.jpg" alt="DM Espetinho">'+
+    '<h1 class="login-tt">DM Espetinho</h1>'+
+    '<p class="login-sub">Entre com seu WhatsApp para pedir e salvar seus endereços. Primeiro acesso? A gente cria sua conta na hora.</p>'+
+    '<div class="card">'+
+      '<div class="field"><label>Nome completo</label><input data-oninput="cli-login-f" data-k="nome" value="'+esc(L.nome||'')+'" placeholder="Nome e sobrenome"></div>'+
+      '<div class="field"><label>WhatsApp</label><input inputmode="tel" data-oninput="cli-login-f" data-k="whats" value="'+esc(L.whats||'')+'" placeholder="(94) 9...."></div>'+
+      '<button class="btn btn-primary btn-block btn-lg" data-action="cli-login">Entrar / Cadastrar</button>'+
+    '</div>'+
+    '<p class="login-fine">Ao entrar, você concorda em receber avisos do seu pedido pelo WhatsApp.</p>'+
+    '</div></div></div>';
+}
 function viewCliente(){
+  if(!estaLogado()) return cliLogin();
   var s=UI.cli.screen, body;
   if(s==='home') body=cliHome();
   else if(s==='carrinho') body=cliCarrinho();
@@ -662,6 +696,7 @@ function cliPerfil(){
     }).join('');
   } else h+='<div class="empty" style="padding:24px">Nenhum endereço salvo ainda.</div>';
   h+='<button class="btn btn-ghost btn-block" style="margin-top:8px" data-action="me-endadd">'+ic('plus')+' Adicionar endereço</button>';
+  h+='<div class="sp"></div><button class="btn btn-red btn-block" data-action="cli-logout">'+ic('x')+' Sair da conta</button>';
   return h;
 }
 function backCli(to){ return '<div class="backbar"><button class="backbtn" data-action="cli-go" data-s="'+to+'">'+ic('back')+' Voltar</button></div>'; }
@@ -1207,6 +1242,7 @@ function criarPedido(){
   UI.me.nome=c.nome; UI.me.tel=c.whats;
   if(c.modo==='delivery'&&c.rua){ var ex=(UI.me.enderecos||[]).filter(function(e){return e.rua===c.rua&&e.numero===c.numero;})[0]; if(!ex) UI.me.enderecos.unshift({bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref,end:endComp}); }
   upsertCliente(c.whats,c.nome,c.modo==='delivery'?{end:endComp,bairro:c.bairro,rua:c.rua,numero:c.numero,comp:c.comp,ref:c.ref}:null);
+  if(CLOUD) cloudCliUpsert();   // sincroniza a conta/endereços do cliente na nuvem
   UI.curOrder=ped.id; UI.cart=[]; UI.cupom=null;
   UI.chk={modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:c.nome,whats:c.whats,pay:null,troco:'',comprov:null,obs:''};
   UI.cli.screen='confirmado'; save(); render();
@@ -1227,6 +1263,22 @@ on('cli-cancelar',function(d){
   },true);
 });
 on('cli-reenviar',function(d){ var o=order(d.id); if(!o) return; pickImage(function(u){ o.pay.comprovante=u; o.pay.status='enviado'; o.status='em_validacao'; o.historico.unshift({t:nowHM(),who:'Cliente',act:'Reenviou o comprovante'}); save(); toast('Comprovante reenviado','ok'); render(); }); });
+on('cli-login-f',function(d,t){ UI.login=UI.login||{}; UI.login[d.k]=t.value; });
+on('cli-login',function(){
+  var L=UI.login||{}; var nome=(L.nome||'').trim().replace(/\s+/g,' '); var whats=(L.whats||'').trim();
+  if(nome.split(' ').length<2 || nome.replace(/\s/g,'').length<3){ toast('Digite seu nome completo (nome e sobrenome)','err'); return; }
+  if(!telValido(whats)){ toast('Digite um WhatsApp válido com DDD','err'); return; }
+  function entrarNovo(){ UI.me.nome=nome; UI.me.tel=whats; if(!Array.isArray(UI.me.enderecos))UI.me.enderecos=[]; persistLocal(); if(CLOUD) cloudCliUpsert(); UI.login=null; UI.cli.screen='home'; render(); toast('Cadastro feito! Bem-vindo, '+nome.split(' ')[0]+'!','ok'); }
+  function entrarExistente(cli){ UI.me.nome=cli.nome||nome; UI.me.tel=whats; UI.me.foto=cli.foto||null; UI.me.enderecos=Array.isArray(cli.enderecos)?cli.enderecos:[]; persistLocal(); UI.login=null; UI.cli.screen='home'; render(); toast('Bem-vindo de volta, '+(UI.me.nome.split(' ')[0])+'!','ok'); }
+  if(!CLOUD){ entrarNovo(); return; }
+  cloudCliGet(normWhats(whats)).then(function(cli){
+    if(cli && (cli.nome||'').trim()){
+      if(normNome(cli.nome)===normNome(nome)) entrarExistente(cli);
+      else toast('Esse WhatsApp já tem cadastro em outro nome. Confira o nome completo.','err');
+    } else entrarNovo();
+  });
+});
+on('cli-logout',function(){ confirmar('Sair da conta?','Seus dados continuam salvos. Você pode entrar de novo com o mesmo WhatsApp e nome.','Sair',function(){ UI.me={nome:'',tel:'',foto:null,enderecos:[]}; UI.cart=[]; UI.login=null; UI.cli.screen='home'; persistLocal(); render(); },false); });
 on('me-f',function(d,t){ UI.me[d.k]=t.value; });
 on('me-salvar',function(){ saveCliente(); toast('Dados salvos','ok'); render(); });
 on('me-foto',function(){ pickImage(function(u){ UI.me.foto=u; saveCliente(); render(); toast('Foto de perfil atualizada','ok'); }); });
@@ -1430,7 +1482,7 @@ function pickImage(cb){
 function initUI(){
   UI={ app:APP_MODE, cli:{screen:'home',cat:'Todos',q:''},
     chk:{modo:null,bairro:'',rua:'',numero:'',comp:'',ref:'',nome:'',whats:'',pay:null,troco:'',comprov:null,obs:''}, cupom:null,
-    cart:[], me:{nome:'',tel:'',foto:null,enderecos:[]},
+    cart:[], login:null, me:{nome:'',tel:'',foto:null,enderecos:[]},
     curOrder:null, _pdId:null,
     adm:{logged:false,user:null,tab:'visao',filter:'todos',filterTipo:'todos',filterPay:'todos',order:null,mais:null,relPer:'tudo',cliQ:'',cliFilter:'todos',_pedit:null} };
 }
@@ -1463,6 +1515,7 @@ function cloudPull(){
 function cloudSubscribe(){ if(!sb) return; try{ sb.channel('estado-rt').on('postgres_changes',{event:'*',schema:'public',table:'estado'}, function(){ cloudPull(); }).subscribe(); }catch(e){} }
 function cloudBoot(){
   initUI(); seed(); load(); render();   // pinta na hora com cache local; a nuvem sobrescreve em seguida
+  refreshCliente();   // puxa a conta/endereços do cliente logado (ou cria a linha se ainda não existir)
   sb.from('estado').select('data,rev').eq('id',1).single().then(function(r){
     if(r&&r.data&&r.data.data&&r.data.data.produtos){ if(aplicarNuvem(r.data)) render(); }
     else { cloudPush(); }   // nuvem vazia -> sobe o cardápio atual
@@ -1473,8 +1526,8 @@ function cloudBoot(){
 
 if(CLOUD){
   cloudBoot();
-  window.addEventListener('focus', function(){ cloudPull(); });
-  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden) cloudPull(); });
+  window.addEventListener('focus', function(){ cloudPull(); refreshCliente(); });
+  if(typeof document!=='undefined') document.addEventListener('visibilitychange', function(){ if(!document.hidden){ cloudPull(); refreshCliente(); } });
 } else {
   if(bc){ bc.onmessage=function(ev){ if(ev&&ev.data&&ev.data!==lastRev){ lastRev=ev.data; if(reloadShared()) render(); } }; }
   window.addEventListener('storage', function(e){ if(e.key===LSKEY||e.key===REVKEY) syncCheck(); });
